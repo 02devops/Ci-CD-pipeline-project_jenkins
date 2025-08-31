@@ -1,0 +1,295 @@
+     🚀 CI/CD Pipeline with Jenkins, Docker, and GitHub
+
+A complete DevOps pipeline for a Java Spring Boot application using Jenkins, Docker, and GitHub, with deployment via Nginx on an AWS EC2 instance and domain-based HTTPS access.
+
+📦 Project Structure Overview
+
+ Launch EC2 instance
+
+ Clone your GitHub repo
+
+ Create Dockerfile and Jenkinsfile
+
+  Set up Jenkins and Docker on EC2
+
+  Build CI/CD Pipeline:
+
+  Pull code from GitHub
+
+  Build JAR with Maven
+
+  Create Docker image
+
+  Push to Docker Hub
+
+  Deploy using Docker
+
+Serve app via Nginx + HTTPS (Let's Encrypt)
+
+   🖥️ Step 1: Launch EC2 Instance
+
+AWS Console → EC2 → Launch Instance
+
+  Settings:
+
+OS: Ubuntu 22.04 (recommended)
+
+Instance type: t2.medium
+
+Storage: 20 GB
+
+Security Group Rules:
+
+✅ Port 22 (SSH)
+
+✅ Port 8080 (Jenkins)
+
+✅ Port 9090 (Docker container)
+
+✅ Ports 80 & 443 (Nginx + HTTPS)
+
+Connect via SSH:
+
+ssh -i your-key.pem ubuntu@<your-ec2-public-ip>
+
+🔹 Step 2: Install Jenkins
+
+Follow Jenkins official docs: Install Jenkins on Ubuntu
+
+Access Jenkins:
+http://<your-ec2-ip>:8080
+
+Get Initial Admin Password:
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+java version to 17 (for jenkins)
+sudo apt install openjdk-17-jdk -y
+sudo update-alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-openjdk-amd64/bin/java 1
+sudo update-alternatives --install /usr/bin/javac javac /usr/lib/jvm/java-17-openjdk-amd64/bin/javac 1
+sudo update-alternatives --config java
+sudo update-alternatives --config javac
+
+# Set environment variable
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' >> ~/.bashrc
+Then verify:
+java -version
+javac -version
+echo $JAVA_HOME
+
+Choose "Install Suggested Plugins" when prompted
+
+🧱 Step 3: Jenkins Setup
+a. Install Required Plugins
+
+Pipeline
+
+Docker & Docker Pipeline
+
+Maven Integration
+
+b. Add DockerHub Credentials
+
+Jenkins → Manage Jenkins → Credentials → Global → Add Credentials
+
+Kind: Username & Password
+
+ID: dockerhub-creds
+
+Docker Username: dharam3030
+
+Password: (DockerHub password)
+
+c. Install Docker & Add Jenkins to Docker Group
+sudo apt update && sudo apt install docker.io -y
+sudo systemctl start docker
+sudo usermod -aG docker jenkins
+sudo systemctl restart docker
+sudo systemctl restart jenkins
+sudo reboot
+
+d. Install Maven
+sudo apt install maven -y
+mvn -v
+
+📁 Step 4: GitHub Repo Setup
+Use this repo:
+
+📦 https://github.com/02devops/spring-petclinic.git
+
+You may fork it to your own GitHub account if desired
+
+🧾 Step 5: Create Jenkinsfile
+
+Place the following Jenkinsfile in the root of your repo:
+
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = 'dharam3030/spring-petclinic'
+        CONTAINER_PORT = '8080'
+        HOST_PORT = '9090'
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/02devops/spring-petclinic.git'
+            }
+        }
+
+        stage('Build JAR') {
+            steps {
+                sh 'mvn clean package -DskipTests -Dmaven.compiler.release=17'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t $IMAGE_NAME .'
+            }
+        }
+
+        stage('Push to DockerHub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds', 
+                    usernameVariable: 'DOCKER_USERNAME', 
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+                        docker push $IMAGE_NAME
+                    '''
+                }
+            }
+        }
+
+        stage('Clean Running Container') {
+            steps {
+                sh '''
+                    docker stop spring-petclinic || true
+                    docker rm spring-petclinic || true
+                '''
+            }
+        }
+
+        stage('Deploy Container') {
+            steps {
+                sh 'docker run -d --name spring-petclinic -p $HOST_PORT:$CONTAINER_PORT $IMAGE_NAME'
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo '❌ Build or deployment failed!'
+        }
+        success {
+            echo '✅ Build, push, and deployment successful!'
+        }
+    }
+}
+🐳 Step 6: Dockerfile
+
+Place in root of your repo:
+
+# Use a slim and secure base image
+FROM eclipse-temurin:17-jdk-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy only the built JAR file into the image
+COPY target/*.jar app.jar
+
+# Expose internal port
+EXPOSE 8080
+
+# Run the Spring Boot app
+ENTRYPOINT ["java", "-jar", "app.jar"]
+
+
+🚀 Step 7: Run Jenkins Job
+
+Jenkins → New Item → Pipeline
+
+Name: CI-CD-SPRINGBOOT
+
+Choose: Pipeline from SCM
+
+SCM: Git
+
+Repo URL: https://github.com/02devops/spring-petclinic.git
+
+Branch: main
+
+Click Save → Build Now
+
+🌐 Step 8: Add Domain + HTTPS with Nginx
+A. Point Domain to EC2 IP
+
+In your domain provider dashboard (GoDaddy, Hostinger, etc.):
+
+DNS Settings → Add A Record
+
+Name: @
+
+Value: <EC2 Public IP>
+
+TTL: 300
+
+B. Install Nginx
+sudo apt update
+sudo apt install nginx -y
+sudo systemctl enable nginx
+sudo systemctl start nginx
+
+C. Install Certbot for SSL
+sudo apt install certbot python3-certbot-nginx -y
+
+D. Configure Nginx Proxy
+sudo nano /etc/nginx/sites-available/default
+
+Replace with:
+server {
+    server_name toptrail.xyz www.toptrail.xyz;
+
+    location / {
+        proxy_pass http://localhost:9090;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection keep-alive;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+
+Test and reload:
+
+sudo nginx -t
+sudo systemctl reload nginx
+
+E. Enable HTTPS with Certbot
+sudo certbot --nginx -d toptrail.xyz -d www.toptrail.xyz
+✅ Final Notes
+
+
+📎 Useful Links
+
+GitHub Repo: 02devops/spring-petclinic
+
+Docker Hub: dharam3030 DockerHub
+
+Jenkins Docs: https://www.jenkins.io/doc/
+
+Certbot Docs: https://certbot.eff.org/
+
+🏁 Conclusion
+
+You've built a full-stack CI/CD pipeline for a Spring Boot application with Jenkins, Docker, GitHub, and Nginx — complete with domain and SSL. This project is a real-world demonstration of modern DevOps best practices.
